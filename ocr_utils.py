@@ -73,28 +73,57 @@ def extract_title_from_pdf(pdf_file):
                 'conf': sum([text['conf'][j] for j in line_indices]) / len(line_indices)
             })
         
-        # Filter out lines that match common non-title patterns
-        filtered_lines = [line for line in lines 
-                         if not re.search(r'Gartner.*Usage Policy|Copyright|Confidential|Page \d+|^\d+$', 
-                                         line['text'], re.IGNORECASE)]
+        # Filter out lines that match common non-title patterns and footer content
+        filtered_lines = []
+        for line in lines:
+            # Skip common footer text patterns
+            if re.search(r'Gartner|Usage Policy|Copyright|Confidential|Page \d+|^\d+$|registered trademark|publication|All rights reserved|Restricted|Internal Use|' + 
+                        r'property of|reproduction|duplicated|permission|^Amy\s+\w+\s*$|e-mail|^www\.|Publication|http', 
+                        line['text'], re.IGNORECASE):
+                continue
+                
+            # Skip lines at the very bottom of the page (bottom 20%)
+            if line['top'] > first_page.height * 0.8:
+                continue
+                
+            # Skip very short lines (likely not titles)
+            if len(line['text'].split()) < 2 and not line['text'].endswith(':'):
+                # Keep lines that end with colon as they might be part of "Workshop:" pattern
+                continue
+                
+            filtered_lines.append(line)
         
         # Group lines by similar font size and vertical position
         def group_lines_by_title():
+            # Check if we have any lines to process
+            if not filtered_lines:
+                return None
+                
             # Sort lines by vertical position (top first)
             sorted_lines = sorted(filtered_lines, key=lambda x: x['top'])
             
-            # Identify the largest font size in the top section of the document
-            top_section_lines = [line for line in sorted_lines if line['top'] < sorted_lines[0]['top'] + 300]
+            # Get the image dimensions to determine positioning
+            img_height = first_page.height
+            
+            # Focus only on the top 30% of the document - titles are typically at the top
+            top_third_cutoff = img_height * 0.3
+            top_section_lines = [line for line in sorted_lines if line['top'] < top_third_cutoff]
+            
+            if not top_section_lines:
+                # If no lines in top third, use top few lines from the whole document
+                top_section_lines = sorted_lines[:5] if len(sorted_lines) >= 5 else sorted_lines
+            
             if not top_section_lines:
                 return None
                 
+            # Identify the largest font size in the top section
             max_font_size = max([line['font_size'] for line in top_section_lines])
             
-            # Find lines with font size close to max (at least one is a title line)
-            title_font_threshold = max_font_size * 0.8  # Allow some variation
+            # Find lines with font size close to max (at least 70% of max size)
+            title_font_threshold = max_font_size * 0.7
             potential_title_lines = [line for line in sorted_lines 
                                    if line['font_size'] >= title_font_threshold and
-                                   line['top'] < sorted_lines[0]['top'] + 400]  # Look only in top section
+                                   line['top'] < top_third_cutoff]  # Look only in top section
             
             if not potential_title_lines:
                 return None
