@@ -12,7 +12,7 @@ def extract_title_from_pdf(pdf_file):
         pdf_file: PDF file as a BytesIO object
         
     Returns:
-        Extracted title as a string
+        Extracted title as a string (complete sentence)
     """
     try:
         # Convert first page of PDF to image
@@ -28,7 +28,7 @@ def extract_title_from_pdf(pdf_file):
         # Process the page with OCR
         text = pytesseract.image_to_data(first_page, output_type=pytesseract.Output.DICT)
         
-        # Combine OCR data
+        # Combine OCR data into lines
         lines = []
         current_line = []
         current_line_number = 0
@@ -37,67 +37,100 @@ def extract_title_from_pdf(pdf_file):
             if text['text'][i].strip():  # Skip empty strings
                 # If we have a new line number, save the previous line and start a new one
                 if text['line_num'][i] != current_line_number and current_line:
-                    lines.append(' '.join(current_line))
+                    lines.append({
+                        'text': ' '.join(current_line),
+                        'line_num': current_line_number,
+                        'font_size': max([text['height'][j] for j in range(len(text['text'])) 
+                                         if text['line_num'][j] == current_line_number and text['text'][j].strip()]),
+                        'top': min([text['top'][j] for j in range(len(text['text'])) 
+                                   if text['line_num'][j] == current_line_number and text['text'][j].strip()]),
+                        'conf': sum([text['conf'][j] for j in range(len(text['text'])) 
+                                    if text['line_num'][j] == current_line_number and text['text'][j].strip()]) / 
+                               len([j for j in range(len(text['text'])) 
+                                   if text['line_num'][j] == current_line_number and text['text'][j].strip()])
+                    })
                     current_line = []
                 
                 current_line_number = text['line_num'][i]
                 current_line.append(text['text'][i])
-                
+        
         # Add the last line if it exists
         if current_line:
-            lines.append(' '.join(current_line))
-        
-        # Look for potential title candidates (large font, bold)
-        title_candidates = []
-        
-        for i in range(len(text['text'])):
-            if text['text'][i].strip() and text['conf'][i] > 50:  # Skip low confidence
-                # Look for text with larger font or bold text (higher height)
-                if text['height'][i] > 15:  # Adjust threshold based on your PDFs
-                    title_candidates.append({
-                        'text': text['text'][i],
-                        'font_size': text['height'][i],
-                        'line_num': text['line_num'][i],
-                        'conf': text['conf'][i],
-                        'top': text['top'][i]
-                    })
-        
-        # Sort candidates by position (top first)
-        title_candidates.sort(key=lambda x: x['top'])
-        
-        # Find full lines with these candidates
-        potential_titles = []
-        
-        for candidate in title_candidates:
-            # Find the complete line containing this candidate
-            line_text = next((line for line in lines if candidate['text'] in line), candidate['text'])
-            
-            # Skip if it matches common non-title text patterns
-            if re.search(r'Gartner.*Usage Policy|Copyright|Confidential|Page \d+', line_text, re.IGNORECASE):
-                continue
-                
-            potential_titles.append({
-                'text': line_text,
-                'font_size': candidate['font_size'],
-                'top': candidate['top'],
-                'conf': candidate['conf']
+            lines.append({
+                'text': ' '.join(current_line),
+                'line_num': current_line_number,
+                'font_size': max([text['height'][j] for j in range(len(text['text'])) 
+                                 if text['line_num'][j] == current_line_number and text['text'][j].strip()]),
+                'top': min([text['top'][j] for j in range(len(text['text'])) 
+                           if text['line_num'][j] == current_line_number and text['text'][j].strip()]),
+                'conf': sum([text['conf'][j] for j in range(len(text['text'])) 
+                            if text['line_num'][j] == current_line_number and text['text'][j].strip()]) / 
+                       len([j for j in range(len(text['text'])) 
+                           if text['line_num'][j] == current_line_number and text['text'][j].strip()])
             })
         
-        # Remove duplicates
-        unique_titles = []
-        for pt in potential_titles:
-            if pt['text'] not in [ut['text'] for ut in unique_titles]:
-                unique_titles.append(pt)
+        # Filter out lines that match common non-title patterns
+        filtered_lines = [line for line in lines 
+                         if not re.search(r'Gartner.*Usage Policy|Copyright|Confidential|Page \d+', 
+                                         line['text'], re.IGNORECASE)]
         
-        # If we have candidates, return the first one (topmost prominent text)
-        if unique_titles:
-            return unique_titles[0]['text'].strip()
+        # Sort lines by font size (descending) and position (top first)
+        # This prioritizes larger text that appears earlier in the document
+        potential_titles = sorted(filtered_lines, key=lambda x: (-x['font_size'], x['top']))
         
-        # Fallback: try to find the first non-empty, non-header/footer line
+        # Extract complete sentences by combining adjacent lines with similar font sizes
+        title_sentences = []
+        
+        if potential_titles:
+            # Start with the most prominent line
+            current_sentence = [potential_titles[0]]
+            current_font_size = potential_titles[0]['font_size']
+            
+            # Combine adjacent lines with similar font size
+            for i in range(1, len(potential_titles)):
+                line = potential_titles[i]
+                # If the line is close to the previous one and has similar font size
+                if (abs(line['top'] - current_sentence[-1]['top']) < 30 and 
+                    abs(line['font_size'] - current_font_size) < 5):
+                    current_sentence.append(line)
+                else:
+                    # If we have a complete sentence, add it to our results
+                    if current_sentence:
+                        combined_text = ' '.join([l['text'] for l in current_sentence])
+                        if len(combined_text.split()) >= 3:  # Ensure it's a meaningful sentence
+                            title_sentences.append({
+                                'text': combined_text,
+                                'font_size': current_font_size,
+                                'top': current_sentence[0]['top']
+                            })
+                    
+                    # Start a new sentence
+                    current_sentence = [line]
+                    current_font_size = line['font_size']
+            
+            # Add the last sentence if it exists
+            if current_sentence:
+                combined_text = ' '.join([l['text'] for l in current_sentence])
+                if len(combined_text.split()) >= 3:  # Ensure it's a meaningful sentence
+                    title_sentences.append({
+                        'text': combined_text,
+                        'font_size': current_font_size,
+                        'top': current_sentence[0]['top']
+                    })
+        
+        # If we have sentence candidates, return the one with the largest font
+        if title_sentences:
+            title_sentences.sort(key=lambda x: (-x['font_size'], x['top']))
+            return title_sentences[0]['text'].strip()
+        
+        # If no complete sentences were found, fall back to the original algorithm
+        if potential_titles:
+            return potential_titles[0]['text'].strip()
+        
+        # Final fallback: use any non-empty line
         for line in lines:
-            line = line.strip()
-            if line and not re.search(r'Gartner.*Usage Policy|Copyright|Confidential|Page \d+', line, re.IGNORECASE):
-                return line
+            if line['text'].strip():
+                return line['text'].strip()
         
         return None
     except Exception as e:

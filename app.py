@@ -3,6 +3,7 @@ import os
 import zipfile
 import tempfile
 import time
+import re
 from io import BytesIO
 
 from pdf_processor import extract_pdfs_from_zip, is_pdf_file
@@ -72,8 +73,14 @@ if uploaded_files:
                 # Convert PDF to PPT
                 ppt_bytes = convert_pdf_to_ppt(BytesIO(pdf_file['content']), title)
                 
+                # Clean the title for file naming (remove invalid characters)
+                clean_title = re.sub(r'[\\/*?:"<>|]', '', title)  # Remove invalid filename characters
+                # Truncate if too long (max 100 chars)
+                if len(clean_title) > 100:
+                    clean_title = clean_title[:97] + "..."
+                
                 # Add to converted files
-                ppt_filename = f"{title}.pptx"
+                ppt_filename = f"{clean_title}.pptx"
                 converted_files.append({"name": ppt_filename, "content": ppt_bytes})
                 
                 progress_bar.progress((i + 1) / len(pdf_files))
