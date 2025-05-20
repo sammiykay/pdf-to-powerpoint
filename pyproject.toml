@@ -1,0 +1,14 @@
+[project]
+name = "repl-nix-workspace"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.11"
+dependencies = [
+    "pdf2image>=1.17.0",
+    "pillow>=11.2.1",
+    "poppler-utils>=0.1.0",
+    "pypdf2>=3.0.1",
+    "pytesseract>=0.3.13",
+    "python-pptx>=1.0.2",
+    "streamlit>=1.45.1",
+]
